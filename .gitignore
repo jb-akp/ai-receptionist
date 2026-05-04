@@ -1,3 +1,11 @@
-.env.local
+.env*
+!.env.example
 venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+uv.lock
 .DS_Store

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -9,7 +8,7 @@ from typing import Any
 
 import httpx
 from dotenv import load_dotenv
-from livekit import api, rtc
+from livekit import api
 from livekit.agents import (
     Agent,
     AgentSession,
@@ -31,12 +30,13 @@ from livekit.plugins import (
 from livekit.plugins.turn_detector.english import EnglishModel
 
 load_dotenv(dotenv_path=".env.local")
-logger = logging.getLogger("cold-caller")
+logger = logging.getLogger("receptionist")
 logger.setLevel(logging.INFO)
 
-outbound_trunk_id = os.getenv("SIP_OUTBOUND_TRUNK_ID")
 cal_api_key = os.getenv("CAL_API_KEY", "").strip('"')
 cal_event_type_id = os.getenv("CAL_EVENT_TYPE_ID")
+business_name_default = os.getenv("BUSINESS_NAME", "Acme Consulting")
+owner_name_default = os.getenv("OWNER_NAME", "James")
 
 CAL_API_BASE = "https://api.cal.com/v2"
 
@@ -53,39 +53,29 @@ async def _cal_request(method: str, path: str, *, api_version: str, **kwargs) ->
         return resp.json()
 
 
-class ColdCaller(Agent):
-    def __init__(self, *, lead_name: str, dial_info: dict[str, Any]):
+class Receptionist(Agent):
+    def __init__(self, *, business_name: str, owner_name: str):
         super().__init__(
             instructions=f"""
-You are an AI sales development representative making an outbound call to a lead. Your interface is voice only — every word you produce will be spoken aloud by a TTS system.
+You are an AI receptionist answering inbound phone calls for {business_name}, a solo consulting practice run by {owner_name}. Your interface is voice only — every word will be spoken aloud by a TTS system.
 
 CRITICAL VOICE RULES:
-- Speak in plain prose. NEVER use markdown formatting — no asterisks, no bullets, no bold, no headings. The TTS will read symbols literally.
-- Short sentences. No filler ("umm", "like", "you know"). Conversational, not robotic.
-- When confirming an email or phone number, spell it out naturally ("jimmy bradford five five at yahoo dot com") — don't say "the email is colon".
+- Speak in plain prose. NEVER use markdown formatting — no asterisks, no bullets, no bold, no headings. The TTS reads symbols literally.
+- Short sentences. No filler ("umm", "like"). Warm, professional, conversational.
+- When confirming an email or phone number, spell it out naturally ("sarah at gmail dot com"), not "the email is colon".
 
-YOUR GOAL: introduce yourself briefly, qualify the lead, and book a 30-minute discovery call if they're interested.
-
-THE LEAD'S NAME: {lead_name}.
+YOUR JOB: greet the caller, find out why they're calling, and either book a 30-minute consultation on {owner_name}'s calendar or take a message.
 
 CALL FLOW:
-1. Greet them by name in one short friendly sentence and ask if they have 30 seconds.
-2. If they say no or are clearly busy, offer to call another time and use end_call.
-3. If yes, give a one-sentence reason for the call (the pitch).
-4. Ask one qualifying question to gauge interest.
-5. If interested, offer to book a discovery call. Call look_up_availability to find open slots. Read 2 or 3 options aloud naturally.
-6. Once they pick a time, ask for their full name and email. Confirm both back to them verbally before booking — "Just to confirm, that's [name] at [email spelled out naturally], booking for [day] at [time]. Sound right?"
-7. After they confirm, call book_meeting. Then briefly tell them they'll get a calendar invite and use end_call.
-8. If they're not interested, thank them and use end_call.
-9. If you hear voicemail, do NOT leave a message — use detected_answering_machine immediately.
-            """
+1. Greet warmly: "Thanks for calling {business_name}, this is the assistant. How can I help?"
+2. Listen to why they're calling. Be patient, ask one clarifying question if needed.
+3. If they want to talk to {owner_name}, book a meeting, or discuss working together: offer to schedule a 30-minute consultation. Call look_up_availability to find open slots and read 2 or 3 options aloud naturally.
+4. Once they pick a time, ask for their full name and email. Confirm both back verbally before booking — "Just to confirm, that's [name] at [email spelled naturally], for [day] at [time]. Sound right?"
+5. After they confirm, call book_meeting. Tell them they'll get a calendar invite by email, then use end_call.
+6. If they have a quick question that doesn't need {owner_name} directly, answer briefly if you can; otherwise offer to take a message and have {owner_name} follow up.
+7. If they're rude, abusive, or clearly a spam call, politely end the call with end_call.
+"""
         )
-        self.participant: rtc.RemoteParticipant | None = None
-        self.dial_info = dial_info
-        self.lead_name = lead_name
-
-    def set_participant(self, participant: rtc.RemoteParticipant):
-        self.participant = participant
 
     async def hangup(self):
         job_ctx = get_job_context()
@@ -125,12 +115,12 @@ CALL FLOW:
         attendee_name: str,
         attendee_email: str,
     ) -> dict[str, Any]:
-        """Book a 30-minute discovery call on the calendar.
+        """Book a 30-minute consultation on the calendar.
 
         Args:
             start_iso: Meeting start time in ISO 8601 format (e.g., 2026-05-08T15:00:00Z)
-            attendee_name: The lead's full name
-            attendee_email: The lead's email address
+            attendee_name: The caller's full name
+            attendee_email: The caller's email address
         """
         payload = {
             "start": start_iso,
@@ -160,15 +150,9 @@ CALL FLOW:
 
     @function_tool()
     async def end_call(self, ctx: RunContext):
-        """Called when the user wants to end the call or after a graceful goodbye."""
-        logger.info(f"ending call for {self.participant.identity if self.participant else 'unknown'}")
+        """Called after a graceful goodbye to end the call."""
+        logger.info("ending call")
         await ctx.wait_for_playout()
-        await self.hangup()
-
-    @function_tool()
-    async def detected_answering_machine(self, ctx: RunContext):
-        """Called when the call reaches voicemail. Hang up immediately — do NOT leave a message."""
-        logger.info("voicemail detected, hanging up")
         await self.hangup()
 
 
@@ -176,11 +160,11 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"connecting to room {ctx.room.name}")
     await ctx.connect()
 
-    dial_info = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
-    phone_number = dial_info.get("phone_number")
-    lead_name = dial_info.get("lead_name", "there")
+    metadata = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
+    business_name = metadata.get("business_name", business_name_default)
+    owner_name = metadata.get("owner_name", owner_name_default)
 
-    agent = ColdCaller(lead_name=lead_name, dial_info=dial_info)
+    agent = Receptionist(business_name=business_name, owner_name=owner_name)
 
     session = AgentSession(
         turn_detection=EnglishModel(),
@@ -190,48 +174,18 @@ async def entrypoint(ctx: JobContext):
         llm=anthropic.LLM(model="claude-sonnet-4-6"),
     )
 
-    session_started = asyncio.create_task(
-        session.start(
-            agent=agent,
-            room=ctx.room,
-            room_input_options=RoomInputOptions(
-                noise_cancellation=noise_cancellation.BVCTelephony(),
-            ),
-        )
+    await session.start(
+        agent=agent,
+        room=ctx.room,
+        room_input_options=RoomInputOptions(
+            noise_cancellation=noise_cancellation.BVCTelephony(),
+        ),
     )
 
-    if not phone_number:
-        logger.info("no phone_number in metadata — running in playground/web mode")
-        await session_started
-        await session.generate_reply(
-            instructions=f"Greet {lead_name} by name in one short friendly sentence and ask if they have 30 seconds."
-        )
-        return
-
-    try:
-        await ctx.api.sip.create_sip_participant(
-            api.CreateSIPParticipantRequest(
-                room_name=ctx.room.name,
-                sip_trunk_id=outbound_trunk_id,
-                sip_call_to=phone_number,
-                participant_identity=phone_number,
-                wait_until_answered=True,
-            )
-        )
-        await session_started
-        participant = await ctx.wait_for_participant(identity=phone_number)
-        logger.info(f"participant joined: {participant.identity}")
-        agent.set_participant(participant)
-        await session.generate_reply(
-            instructions=f"Greet {lead_name} by name in one short friendly sentence and ask if they have 30 seconds."
-        )
-    except api.TwirpError as e:
-        logger.error(
-            f"SIP error: {e.message} status={e.metadata.get('sip_status_code')} "
-            f"{e.metadata.get('sip_status')}"
-        )
-        ctx.shutdown()
+    await session.generate_reply(
+        instructions=f"Greet the caller warmly: thank them for calling {business_name} and ask how you can help. One short sentence."
+    )
 
 
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, agent_name="cold-caller"))
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, agent_name="receptionist"))

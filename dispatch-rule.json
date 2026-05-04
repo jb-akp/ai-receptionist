@@ -1,0 +1,17 @@
+{
+  "dispatch_rule": {
+    "name": "Receptionist dispatch",
+    "rule": {
+      "dispatchRuleIndividual": {
+        "roomPrefix": "call-"
+      }
+    },
+    "roomConfig": {
+      "agents": [
+        {
+          "agentName": "receptionist"
+        }
+      ]
+    }
+  }
+}

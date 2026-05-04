@@ -176,8 +176,8 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"connecting to room {ctx.room.name}")
     await ctx.connect()
 
-    dial_info = json.loads(ctx.job.metadata)
-    participant_identity = phone_number = dial_info["phone_number"]
+    dial_info = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
+    phone_number = dial_info.get("phone_number")
     lead_name = dial_info.get("lead_name", "there")
 
     agent = ColdCaller(lead_name=lead_name, dial_info=dial_info)
@@ -200,18 +200,26 @@ async def entrypoint(ctx: JobContext):
         )
     )
 
+    if not phone_number:
+        logger.info("no phone_number in metadata — running in playground/web mode")
+        await session_started
+        await session.generate_reply(
+            instructions=f"Greet {lead_name} by name in one short friendly sentence and ask if they have 30 seconds."
+        )
+        return
+
     try:
         await ctx.api.sip.create_sip_participant(
             api.CreateSIPParticipantRequest(
                 room_name=ctx.room.name,
                 sip_trunk_id=outbound_trunk_id,
                 sip_call_to=phone_number,
-                participant_identity=participant_identity,
+                participant_identity=phone_number,
                 wait_until_answered=True,
             )
         )
         await session_started
-        participant = await ctx.wait_for_participant(identity=participant_identity)
+        participant = await ctx.wait_for_participant(identity=phone_number)
         logger.info(f"participant joined: {participant.identity}")
         agent.set_participant(participant)
         await session.generate_reply(

@@ -55,7 +55,7 @@ The agent's call flow (driven by Claude Sonnet 4.6 + the system prompt in `agent
 1. Caller dials your Telnyx number
 2. Telnyx routes the call to LiveKit via the FQDN
 3. LiveKit's dispatch rule creates a fresh room and assigns the receptionist agent
-4. Agent greets immediately: *"Thanks for calling Acme Consulting, this is the assistant. How can I help?"*
+4. Agent greets immediately: *"Thanks for calling James Bradford Consulting, this is the assistant. How can I help?"*
 5. Conversation; if the caller wants to talk to the owner → call `look_up_availability()` → propose times
 6. On confirmation → call `book_meeting()` → real meeting lands on Cal.com
 7. Graceful end via `end_call()`

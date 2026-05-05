@@ -35,7 +35,7 @@ logger.setLevel(logging.INFO)
 
 cal_api_key = os.getenv("CAL_API_KEY", "").strip('"')
 cal_event_type_id = os.getenv("CAL_EVENT_TYPE_ID")
-business_name_default = os.getenv("BUSINESS_NAME", "Acme Consulting")
+business_name_default = os.getenv("BUSINESS_NAME", "James Bradford Consulting")
 owner_name_default = os.getenv("OWNER_NAME", "James")
 
 CAL_API_BASE = "https://api.cal.com/v2"

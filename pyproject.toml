@@ -1,7 +1,7 @@
 [project]
-name = "cold-caller"
+name = "ai-receptionist"
 version = "0.1.0"
-description = "AI cold caller that books meetings via Cal.com (LiveKit + Claude + Telnyx)"
+description = "AI phone receptionist that books meetings on Cal.com (LiveKit + Claude + Cartesia + Deepgram)"
 requires-python = ">=3.10"
 dependencies = [
     "livekit>=1.0",
